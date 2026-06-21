@@ -26,7 +26,7 @@ STOP_FILL = PatternFill("solid", start_color="F2F2F2")
 # Production day runs 07:00 -> 07:00 next day.
 SHIFT_START_HOUR = 7
 # Stoppage classification: below = coil change, at/above = unplanned downtime (minutes)
-STOP_THRESHOLD_MIN = 20
+STOP_THRESHOLD_MIN = 35
 
 
 def production_day(ts):
@@ -48,7 +48,8 @@ COLS = ["#", "Coil No.", "Alloy", "Temper", "HR TH (mm)", "Target Final TH (mm)"
         "Width (mm)", "HR Weight (kg)", "Entry TH (mm)", "Required Passes",
         "Current Pass", "Exit TH after Pass (mm)", "Remaining Passes",
         "Start Time", "End Time", "Total Time (min)", "Target Speed (m/min)",
-        "Actual Speed (m/min)", "Speed Yield (%)", "Next Destination", "Notes"]
+        "Actual Speed (m/min)", "Max Mill Speed (m/min)", "Speed Yield (%)",
+        "Next Destination", "Notes"]
 
 DEST_ORDER = [
     ("F.Ann", "Final annealing"),
@@ -200,6 +201,8 @@ def build_rows(df, plan, report_date):
         exit_mm = round(float(r["Exit Thickness [\u00b5m]"]) / 1000, 3)
         entry_mm = round(float(r["Entry Thickness [\u00b5m]"]) / 1000, 3)
         speed = float(r["Avg. Strip Speed [m/min]"]) if pd.notna(r["Avg. Strip Speed [m/min]"]) else 0
+        mill_max = r.get("Max. Mill Speed [m/min]")
+        mill_max = round(float(mill_max)) if pd.notna(mill_max) else ""
         tgt = target_speed(exit_mm)
         total_min = (r["End Time"] - r["Start Time"]).total_seconds() / 60
         pl = plan_lookup(plan, r["Coil No."], exit_mm)
@@ -212,6 +215,7 @@ def build_rows(df, plan, report_date):
             "start": r["Start Time"], "end": r["End Time"],
             "total": round(total_min, 1),
             "speed": round(speed), "target": tgt,
+            "mill_max": mill_max,
             "yield": round(speed / tgt * 100, 1) if tgt else 0,
             "weight": pl["hr_weight"], **pl,
         })
@@ -235,7 +239,7 @@ def build_excel(rows, report_date, engineer="", df=None, plan=None):
     ws["A1"] = (f"CRM DAILY PRODUCTION REPORT  \u2014  {report_date.strftime('%d/%m/%Y')}"
                 f"  ({report_date.strftime('%d/%m')} 07:00 \u2192 {next_day.strftime('%d/%m')} 07:00)")
     ws["A1"].font = Font(bold=True, size=14, color="1F3864")
-    ws.merge_cells("A1:U1")
+    ws.merge_cells("A1:V1")
     ws["A1"].alignment = Alignment(horizontal="center")
     ws["A2"] = "Report Date"
     ws["C2"] = report_date.strftime("%d/%m/%Y")
@@ -266,35 +270,35 @@ def build_excel(rows, report_date, engineer="", df=None, plan=None):
                     row["target_final"], row["width"], row["weight"], row["entry"],
                     row["req_passes"], pass_lbl, row["exit"], row["remaining"],
                     row["start"].strftime("%H:%M"), row["end"].strftime("%H:%M"),
-                    row["total"], row["target"], row["speed"], row["yield"],
-                    row["next"], ""]
+                    row["total"], row["target"], row["speed"], row["mill_max"],
+                    row["yield"], row["next"], ""]
             for j, v in enumerate(vals, 1):
                 cell = ws.cell(row=r, column=j, value=v)
                 cell.border = THIN
                 cell.alignment = Alignment(horizontal="center")
                 cell.font = Font(size=9)
-            ws.cell(row=r, column=19).fill = yield_fill(row["yield"])
+            ws.cell(row=r, column=20).fill = yield_fill(row["yield"])
         else:
             is_unplanned = row["kind"] == "Unplanned Downtime"
             fill = SHUTDOWN_FILL if is_unplanned else COIL_CHANGE_FILL
             ws.cell(row=r, column=14, value=row["start"].strftime("%H:%M"))
             ws.cell(row=r, column=15, value=row["end"].strftime("%H:%M"))
             ws.cell(row=r, column=16, value=row["min"])
-            ws.cell(row=r, column=20, value=row["kind"])
-            for j in range(1, 22):
+            ws.cell(row=r, column=21, value=row["kind"])
+            for j in range(1, 23):
                 cell = ws.cell(row=r, column=j)
                 cell.fill = fill
                 cell.border = THIN
                 cell.alignment = Alignment(horizontal="center")
-                cell.font = Font(size=9, bold=(j == 20),
+                cell.font = Font(size=9, bold=(j == 21),
                                  color="9C0006" if is_unplanned else "006100")
         r += 1
 
     last = r - 1
-    ws.auto_filter.ref = f"A{hr}:U{last}"
+    ws.auto_filter.ref = f"A{hr}:W{last}"
     ws.freeze_panes = f"A{hr+1}"
 
-    widths = [4, 13, 7, 9, 8, 10, 8, 11, 9, 9, 9, 11, 9, 9, 9, 9, 9, 9, 9, 18, 14]
+    widths = [4, 13, 7, 9, 8, 10, 8, 11, 9, 9, 9, 11, 9, 9, 9, 9, 9, 9, 11, 9, 18, 14]
     for j, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(j)].width = w
 
@@ -658,13 +662,13 @@ def build_monthly_excel(df, plan, year, month, engineer=""):
                         row["weight"], row["entry"], row["req_passes"], pass_lbl, row["exit"],
                         row["remaining"], row["start"].strftime("%H:%M"),
                         row["end"].strftime("%H:%M"), row["total"], row["target"],
-                        row["speed"], row["yield"], row["next"], ""]
+                        row["speed"], row["mill_max"], row["yield"], row["next"], ""]
                 for j, v in enumerate(vals, 1):
                     cell = ws.cell(row=r, column=j, value=v)
                     cell.border = THIN
                     cell.alignment = Alignment(horizontal="center")
                     cell.font = Font(size=9)
-                ws.cell(row=r, column=20).fill = yield_fill(row["yield"])
+                ws.cell(row=r, column=21).fill = yield_fill(row["yield"])
             else:
                 is_unpl = row["kind"] == "Unplanned Downtime"
                 fill = SHUTDOWN_FILL if is_unpl else COIL_CHANGE_FILL
@@ -672,13 +676,13 @@ def build_monthly_excel(df, plan, year, month, engineer=""):
                 ws.cell(row=r, column=15, value=row["start"].strftime("%H:%M"))
                 ws.cell(row=r, column=16, value=row["end"].strftime("%H:%M"))
                 ws.cell(row=r, column=17, value=row["min"])
-                ws.cell(row=r, column=21, value=row["kind"])
-                for j in range(1, 23):
+                ws.cell(row=r, column=22, value=row["kind"])
+                for j in range(1, 24):
                     cell = ws.cell(row=r, column=j)
                     cell.fill = fill
                     cell.border = THIN
                     cell.alignment = Alignment(horizontal="center")
-                    cell.font = Font(size=9, bold=(j == 21),
+                    cell.font = Font(size=9, bold=(j == 22),
                                      color="9C0006" if is_unpl else "006100")
             r += 1
 
@@ -710,9 +714,9 @@ def build_monthly_excel(df, plan, year, month, engineer=""):
         })
 
     last = r - 1
-    ws.auto_filter.ref = f"A{hr}:V{last}"
+    ws.auto_filter.ref = f"A{hr}:W{last}"
     ws.freeze_panes = f"A{hr+1}"
-    widths = [8, 7, 13, 7, 9, 8, 10, 8, 11, 9, 9, 11, 9, 9, 9, 9, 9, 9, 9, 9, 18, 12]
+    widths = [8, 7, 13, 7, 9, 8, 10, 8, 11, 9, 9, 11, 9, 9, 9, 9, 9, 9, 11, 9, 9, 18, 12]
     for j, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(j)].width = w
 
