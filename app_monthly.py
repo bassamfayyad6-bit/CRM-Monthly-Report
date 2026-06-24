@@ -26,7 +26,7 @@ STOP_FILL = PatternFill("solid", start_color="F2F2F2")
 # Production day runs 07:00 -> 07:00 next day.
 SHIFT_START_HOUR = 7
 # Stoppage classification: below = coil change, at/above = unplanned downtime (minutes)
-STOP_THRESHOLD_MIN = 25
+STOP_THRESHOLD_MIN = 35
 
 
 def production_day(ts):
